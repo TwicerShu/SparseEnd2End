@@ -17,7 +17,7 @@ try:
 except:
     DFA_VALID = False
 
-## 对外只暴露Sparse4D这个类
+### 对外只暴露Sparse4D这个类
 __all__ = ["Sparse4D"]
 
 
@@ -35,52 +35,73 @@ class Sparse4D(BaseDetector):
         super(Sparse4D, self).__init__(init_cfg=init_cfg)
 
         # =========== build modules ===========
+        
         def build_module(cfg):
             cfg2 = cfg.copy()
             type = cfg2.pop("type")
             return eval(type)(**cfg2)
 
+        ### resnet 部分
         self.img_backbone = build_module(img_backbone)
+
+        ### FPN部分
         if img_neck is not None:
             self.img_neck = build_module(img_neck)
+            
         self.head = build_module(head)
-        self.use_grid_mask = use_grid_mask
+        
         if use_deformable_func:
             assert DFA_VALID, "deformable_aggregation needs to be set up."
         self.use_deformable_func = use_deformable_func
+        
         if depth_branch is not None:
             self.depth_branch = build_module(depth_branch)
         else:
             self.depth_branch = None
+
+        self.use_grid_mask = use_grid_mask
         if use_grid_mask:
             self.grid_mask = GridMask(
                 True, True, rotate=1, offset=False, ratio=0.5, mode=1, prob=0.7
             )
 
+    ### 装饰器的作用是：当它装饰的函数被调用时，它会将img参数自动转换为16位浮点数，然后调用原函数；
+    ### 函数执行完毕后，再将结果转换回32位浮点数，最后返回这个结果
     @auto_fp16(apply_to=("img",), out_fp32=True)
     def extract_feat(self, img, return_depth=False, metas=None):
+        ### 获得输入图像的batch
         bs = img.shape[0]  # (1, 6, 3, 256, 704)
+
+        ### 获得相机数、扁平batch cam_numn维
         if img.dim() == 5:  # multi-view
             num_cams = img.shape[1]
+            ### 0到1维度进行扁平化
             img = img.flatten(end_dim=1)  # [1*6, 3, 256, 704]
         else:
             num_cams = 1
+            
         if self.use_grid_mask:
             img = self.grid_mask(img)
+            
         if "metas" in signature(self.img_backbone.forward).parameters:
             feature_maps = self.img_backbone(img, num_cams, metas=metas)
         else:
             feature_maps = self.img_backbone(img)
+            
         if self.img_neck is not None:
             feature_maps = list(self.img_neck(feature_maps))
+            
         for i, feat in enumerate(feature_maps):
             feature_maps[i] = torch.reshape(feat, (bs, num_cams) + feat.shape[1:])
+            
         if return_depth and self.depth_branch is not None:
             depths = self.depth_branch(feature_maps, metas.get("focal"))
         else:
             depths = None
+            
         if self.use_deformable_func:
             feature_maps = feature_maps_format(feature_maps)
+            
         if return_depth:
             return feature_maps, depths
         return feature_maps

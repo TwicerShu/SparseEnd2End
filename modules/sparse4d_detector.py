@@ -17,6 +17,7 @@ try:
 except:
     DFA_VALID = False
 
+## 对外只暴露Sparse4D这个类
 __all__ = ["Sparse4D"]
 
 

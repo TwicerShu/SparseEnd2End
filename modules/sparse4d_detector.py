@@ -59,6 +59,7 @@ class Sparse4D(BaseDetector):
         else:
             self.depth_branch = None
 
+        ### GridMask 数据增强
         self.use_grid_mask = use_grid_mask
         if use_grid_mask:
             self.grid_mask = GridMask(
@@ -80,28 +81,52 @@ class Sparse4D(BaseDetector):
         else:
             num_cams = 1
             
+        ### 训练过程中数据增强    
         if self.use_grid_mask:
             img = self.grid_mask(img)
-            
+
+        ### img_backbone.forward的参数列表中含有metas，则传入metas和num_cams参数;否则，只传图
+        ### 看img_backbone的设计
         if "metas" in signature(self.img_backbone.forward).parameters:
             feature_maps = self.img_backbone(img, num_cams, metas=metas)
         else:
             feature_maps = self.img_backbone(img)
-            
+
+        ### feature_maps经过backbone输出如下：
+        ## (1*6, 256, 64, 176)
+        ## (1*6, 512, 32, 88)
+        ## (1*6, 1024, 16, 44)
+        ## (1*6, 2048, 8, 22)
+
+        ### 这里转换成一系列的特征图，即多尺度 多相机
         if self.img_neck is not None:
             feature_maps = list(self.img_neck(feature_maps))
             
+        ### enumerate函数会返回每个特征图的索引i和特征图本身feat
         for i, feat in enumerate(feature_maps):
+        ### reshape为（batch,cam_nums，channel,w,h)
             feature_maps[i] = torch.reshape(feat, (bs, num_cams) + feat.shape[1:])
+
+        ### feature_maps经过neck和reshape输出如下：
+        ## (1, 6, 256, 64, 176) float16
+        ## (1, 6, 256, 32, 88) float16
+        ## (1, 6, 256, 16, 44) float16
+        ## (1, 6, 256, 8, 22) float16
             
         if return_depth and self.depth_branch is not None:
             depths = self.depth_branch(feature_maps, metas.get("focal"))
         else:
+        ### 测试分支
             depths = None
             
         if self.use_deformable_func:
             feature_maps = feature_maps_format(feature_maps)
-            
+
+        ### 输出
+        ## (1, 89760, 256） torch.float16
+        ## (6, 4, 2) torch.int64
+        ## (6, 4) torch.int64
+
         if return_depth:
             return feature_maps, depths
         return feature_maps
